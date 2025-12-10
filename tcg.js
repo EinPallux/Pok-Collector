@@ -1,14 +1,17 @@
 /**
- * POKÉCOLLECTOR - TCG FINDER LOGIC (CORS FIXED)
- * Nutzt einen Proxy, um Browser-Blockaden auf GitHub Pages zu umgehen.
+ * POKÉCOLLECTOR - TCG FINDER LOGIC (STABILISIERT)
  */
 
 // --- KONFIGURATION ---
+// Hol dir einen kostenlosen Key auf: https://dev.pokemontcg.io/
+// Mit Key ist es 100x schneller und stabiler. Ohne Key nutzen wir einen Proxy.
+const API_KEY = ''; // <-- HIER DEINEN KEY EINFÜGEN (z.B. 'abc-123-def...')
+
 const TCG_API_URL = 'https://api.pokemontcg.io/v2/cards';
 const POKE_SPECIES_URL = 'https://pokeapi.co/api/v2/pokemon-species';
 
-// Ein Proxy-Dienst, der die CORS-Header für uns repariert
-const CORS_PROXY = 'https://corsproxy.io/?';
+// Fallback Proxy, falls kein API Key vorhanden ist
+const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
 
 // DOM Elemente
 const searchInput = document.getElementById('tcgInput');
@@ -48,41 +51,62 @@ async function handleSearch() {
     console.log(`🔍 Starte Suche nach: "${query}"`);
 
     try {
-        // SCHRITT 1: Namen übersetzen
+        // SCHRITT 1: Namen übersetzen (Deutsch -> Englisch)
         const englishName = await getEnglishName(query);
         console.log(`✅ Übersetzt zu: "${englishName}"`);
-        
         searchedNameEl.innerText = `${query} (${englishName})`;
 
-        // SCHRITT 2: URL Bauen
-        // Wir nutzen den PROXY vor der eigentlichen URL
-        const targetUrl = `${TCG_API_URL}?q=name:${englishName}*&orderBy=-set.releaseDate&pageSize=250&select=id,name,set,images,rarity`;
+        // SCHRITT 2: URL und Headers vorbereiten
+        // Wir reduzieren pageSize auf 60, um Timeouts (504) zu verhindern
+        let targetUrl = `${TCG_API_URL}?q=name:${englishName}*&orderBy=-set.releaseDate&pageSize=60&select=id,name,set,images,rarity`;
+        let fetchUrl = targetUrl;
+        let headers = {};
+
+        // ENTSCHEIDUNG: Key oder Proxy?
+        if (API_KEY) {
+            // Mit Key: Direktzugriff (Schnell & Stabil)
+            headers = { 'X-Api-Key': API_KEY };
+            console.log("🚀 Nutze API Key Modus");
+        } else {
+            // Ohne Key: Proxy nutzen (Langsamer, aber umgeht Blockaden)
+            fetchUrl = CORS_PROXY + encodeURIComponent(targetUrl);
+            console.log("🐢 Nutze Proxy Modus (ohne Key)");
+        }
+
+        console.log(`📡 Abfrage: ${fetchUrl}`);
         
-        // Die Proxy URL (URL muss encoded werden, damit der Proxy sie versteht)
-        const fetchUrl = CORS_PROXY + encodeURIComponent(targetUrl);
-        
-        console.log(`📡 Frage via Proxy ab: ${fetchUrl}`);
-        
-        const tcgRes = await fetch(fetchUrl);
+        const tcgRes = await fetch(fetchUrl, { headers });
 
         if (!tcgRes.ok) {
-            if (tcgRes.status === 429) throw new Error("Zu viele Anfragen. Bitte warte kurz.");
+            if (tcgRes.status === 429) throw new Error("Zu viele Anfragen (Rate Limit). Bitte warte 1 Minute oder hole dir einen API Key.");
+            if (tcgRes.status === 504) throw new Error("Timeout: Der Server hat zu lange gebraucht. Versuche es später erneut.");
             throw new Error(`API Fehler: ${tcgRes.status}`);
         }
 
         const tcgData = await tcgRes.json();
+        
+        // Bei 'allorigins' Proxy kann die Struktur manchmal leicht anders sein, aber meistens JSON direct
+        if (!tcgData.data && !tcgData.count) {
+             throw new Error("Ungültige Antwort vom Server.");
+        }
+
         console.log(`📦 Gefundene Karten: ${tcgData.count}`);
 
-        if (tcgData.count === 0) {
+        if (tcgData.count === 0 || tcgData.data.length === 0) {
             throw new Error(`Keine Karten für "${query}" (Englisch: "${englishName}") gefunden.`);
         }
 
         // SCHRITT 3: Gruppieren
         const setsMap = groupCardsBySet(tcgData.data);
-        console.log(`📂 Gruppiert in ${setsMap.size} Sets`);
 
         // SCHRITT 4: Rendern
         renderSets(setsMap);
+
+        // Warnung anzeigen, wenn wir nur eine Teilmenge geladen haben (wegen Performance)
+        if (tcgData.totalCount > 60) {
+             // Optional: Info einblenden, dass nicht alle Karten geladen wurden
+             console.log("Hinweis: Es wurden nicht alle Karten geladen, um Timeouts zu verhindern.");
+        }
 
     } catch (error) {
         console.error("❌ Fehler:", error);
@@ -97,7 +121,6 @@ async function handleSearch() {
 async function getEnglishName(inputName) {
     try {
         const cleanName = inputName.trim().toLowerCase().replace(' ', '-');
-        // PokeAPI braucht keinen Proxy, die ist sehr offen
         const response = await fetch(`${POKE_SPECIES_URL}/${cleanName}`);
         
         if (!response.ok) return inputName;
@@ -150,7 +173,7 @@ function renderSets(setsMap) {
         cardEl.className = "bg-white rounded-3xl p-6 shadow-sm hover:shadow-xl border border-gray-100 transition-all duration-300 transform hover:-translate-y-1 flex flex-col h-full";
         
         const previewImages = cardsInSet.slice(0, 3).map(c => 
-            `<img src="${c.image}" class="w-16 h-24 object-contain -ml-4 first:ml-0 hover:scale-110 transition-transform z-10 shadow-md bg-white rounded border border-gray-100" title="${c.name}">`
+            `<img src="${c.image}" class="w-16 h-24 object-contain -ml-4 first:ml-0 hover:scale-110 transition-transform z-10 shadow-md bg-white rounded border border-gray-100 bg-gray-50" title="${c.name}">`
         ).join('');
 
         const remainingCount = cardsInSet.length > 3 ? `+${cardsInSet.length - 3}` : '';
@@ -179,7 +202,7 @@ function renderSets(setsMap) {
 
             <div class="mt-4 pt-4 border-t border-gray-50 flex justify-between items-center text-xs text-gray-400">
                 <span>Serie: ${setInfo.series || 'Divers'}</span>
-                <span>${setInfo.total || '?'} Karten</span>
+                <span>Limitierter Load: ${cardsInSet.length}</span>
             </div>
             
             <a href="https://pkmncards.com/set/${setInfo.id}/" target="_blank" class="mt-4 block w-full text-center bg-gray-900 text-white py-2 rounded-xl text-sm font-semibold hover:bg-poke-red transition-colors">
