@@ -1,10 +1,14 @@
 /**
- * POKÉCOLLECTOR - TCG FINDER LOGIC (FIXED & OPTIMIZED)
+ * POKÉCOLLECTOR - TCG FINDER LOGIC (CORS FIXED)
+ * Nutzt einen Proxy, um Browser-Blockaden auf GitHub Pages zu umgehen.
  */
 
 // --- KONFIGURATION ---
 const TCG_API_URL = 'https://api.pokemontcg.io/v2/cards';
 const POKE_SPECIES_URL = 'https://pokeapi.co/api/v2/pokemon-species';
+
+// Ein Proxy-Dienst, der die CORS-Header für uns repariert
+const CORS_PROXY = 'https://corsproxy.io/?';
 
 // DOM Elemente
 const searchInput = document.getElementById('tcgInput');
@@ -40,7 +44,6 @@ async function handleSearch() {
     const query = searchInput.value.trim();
     if (!query) return;
 
-    // UI Reset
     resetUI();
     console.log(`🔍 Starte Suche nach: "${query}"`);
 
@@ -51,19 +54,19 @@ async function handleSearch() {
         
         searchedNameEl.innerText = `${query} (${englishName})`;
 
-        // SCHRITT 2: Karten holen
-        // pageSize=250 verhindert Timeouts bei großen Ergebnissen
-        const queryUrl = `${TCG_API_URL}?q=name:${englishName}*&orderBy=-set.releaseDate&pageSize=250&select=id,name,set,images,rarity`;
+        // SCHRITT 2: URL Bauen
+        // Wir nutzen den PROXY vor der eigentlichen URL
+        const targetUrl = `${TCG_API_URL}?q=name:${englishName}*&orderBy=-set.releaseDate&pageSize=250&select=id,name,set,images,rarity`;
         
-        console.log(`📡 Frage TCG API ab: ${queryUrl}`);
-        const tcgRes = await fetch(queryUrl);
+        // Die Proxy URL (URL muss encoded werden, damit der Proxy sie versteht)
+        const fetchUrl = CORS_PROXY + encodeURIComponent(targetUrl);
+        
+        console.log(`📡 Frage via Proxy ab: ${fetchUrl}`);
+        
+        const tcgRes = await fetch(fetchUrl);
 
-        // API Limit Check (429 = Zu viele Anfragen)
-        if (tcgRes.status === 429) {
-            throw new Error("Zu viele Anfragen! Die API hat uns kurzzeitig blockiert. Bitte warte eine Minute.");
-        }
-        
         if (!tcgRes.ok) {
+            if (tcgRes.status === 429) throw new Error("Zu viele Anfragen. Bitte warte kurz.");
             throw new Error(`API Fehler: ${tcgRes.status}`);
         }
 
@@ -83,7 +86,7 @@ async function handleSearch() {
 
     } catch (error) {
         console.error("❌ Fehler:", error);
-        showError(true, error.message || "Ein unbekannter Fehler ist aufgetreten.");
+        showError(true, error.message || "Verbindungsfehler. Bitte versuche es später noch einmal.");
         startPlaceholder.classList.remove('hidden');
     } finally {
         loadingSpinner.classList.add('hidden');
@@ -91,29 +94,18 @@ async function handleSearch() {
     }
 }
 
-/**
- * Holt den englischen Namen.
- * Versucht es erst als exakten Match, falls 404, gibt input zurück.
- */
 async function getEnglishName(inputName) {
     try {
-        // Namen bereinigen und klein schreiben für die URL
         const cleanName = inputName.trim().toLowerCase().replace(' ', '-');
-        
-        // Wenn der Name schon Englisch klingt (oder Pikachu ist), API fragen
+        // PokeAPI braucht keinen Proxy, die ist sehr offen
         const response = await fetch(`${POKE_SPECIES_URL}/${cleanName}`);
         
-        if (!response.ok) {
-            console.warn("⚠️ Übersetzung fehlgeschlagen (404), nutze Original-Eingabe.");
-            return inputName; // Fallback: Wir nutzen einfach die Eingabe
-        }
+        if (!response.ok) return inputName;
 
         const data = await response.json();
         const englishEntry = data.names.find(n => n.language.name === 'en');
-        
         return englishEntry ? englishEntry.name : inputName;
     } catch (e) {
-        console.warn("⚠️ Verbindungsfehler zur PokéAPI, nutze Original-Eingabe.");
         return inputName;
     }
 }
@@ -122,7 +114,6 @@ function groupCardsBySet(cards) {
     const sets = new Map();
 
     cards.forEach(card => {
-        // Sicherstellen, dass Set-Daten existieren
         if (!card.set || !card.set.id) return;
 
         const setId = card.set.id;
@@ -134,7 +125,6 @@ function groupCardsBySet(cards) {
             });
         }
 
-        // Füge Karte hinzu (mit Sicherheitscheck für Bilder)
         sets.get(setId).cards.push({
             name: card.name,
             image: card.images?.small || 'https://via.placeholder.com/150?text=No+Image',
@@ -159,7 +149,6 @@ function renderSets(setsMap) {
         const cardEl = document.createElement('div');
         cardEl.className = "bg-white rounded-3xl p-6 shadow-sm hover:shadow-xl border border-gray-100 transition-all duration-300 transform hover:-translate-y-1 flex flex-col h-full";
         
-        // Preview Images sicherstellen
         const previewImages = cardsInSet.slice(0, 3).map(c => 
             `<img src="${c.image}" class="w-16 h-24 object-contain -ml-4 first:ml-0 hover:scale-110 transition-transform z-10 shadow-md bg-white rounded border border-gray-100" title="${c.name}">`
         ).join('');
@@ -201,8 +190,6 @@ function renderSets(setsMap) {
         setsGrid.appendChild(cardEl);
     });
 }
-
-// --- HELPER ---
 
 function resetUI() {
     showError(false);
